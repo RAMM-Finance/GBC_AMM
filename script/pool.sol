@@ -248,22 +248,23 @@ contract Pool is Script {
   		bytes memory data; 
   		uint256 in_; 
   		uint256 out_; 
+  		pool.pool().setLiquidity(uint128(210 * PRECISION)); 
 
 		uint256 totalamounts; 
 		uint256 totalCollateral; 
 		uint256 pricenow; 
 		uint256 priceafter; 
   		uint256[] memory amounts = new uint[](managerCount);
-		amounts[0] = 13;
-		amounts[1] = 15;
-		amounts[2] = 23;
-		amounts[3] = 9;
-		amounts[4] = 3;
-		amounts[5] = 53;
-		amounts[6] = 23;
-		amounts[7] = 39;
-		amounts[8] = 5;
-		amounts[9] = 15;
+		amounts[0] = 2;
+		amounts[1] = 3;
+		amounts[2] = 2;
+		amounts[3] = 43;
+		amounts[4] = 32;
+		amounts[5] = 5;
+		amounts[6] = 2;
+		amounts[7] = 92;
+		amounts[8] = 11;
+		amounts[9] = 10;
 
   		// get a whole bunch a managers and let them buy up one at a time 
   		// for(uint256 i; i<managerCount; i++){
@@ -276,27 +277,38 @@ contract Pool is Script {
   		// 	assert( isClose((priceafter-pricenow)* amounts[i] * PRECISION/10, in_, ROUND/10)); 
   		// }
   		// assert( isClose(pool.pool().areaUnderCurve(0,totalamounts, PRECISION/100, (6*PRECISION/10) ), totalCollateral, ROUND  ) ); 
+
   		// get a whole bunch of managers and some buy some takershort
   		pricenow = pool.pool().getCurPrice(); 
-  		for(uint256 i; i< managerCount; i++){
+  		uint256 startbalance = baseToken.balanceOf(address(this)); 
+  		console.log('balancenow', s_tradeToken.balanceOf(address(this))); 
+  		for(uint256 i = 1; i< 9; i++){
 
   			(in_,out_) = i%3 ==0 ? pool.takerOpen(false,  int256(amounts[i] * PRECISION/10), PRECISION, data)
   			 			:pool.takerOpen(true,  -int256(amounts[i] * PRECISION/10), PRECISION, data);
 
   		}
+  		console.log('priceafteropens',pool.pool().getCurPrice() ); 
   		//unwind everything
-  		for(uint256 i; i< managerCount; i++){
+  		console.log('++++++'); 
+  		console.log('shorting begins----'); 
+  		for(uint256 i=1; i< 9; i++){
   			console.log('i', i); 
   			(in_, out_) = i%3 ==0 ? pool.takerClose(false, -int256(amounts[i] * PRECISION/10), PRECISION, data)
   							: pool.takerClose(true, int256(amounts[i] * PRECISION/10), PRECISION, data); 
   		}
+   		console.log('balancenow', s_tradeToken.balanceOf(address(this))); 
+
   		priceafter = pool.pool().getCurPrice(); 
   		console.log('prices', priceafter, pricenow); 
-
-
+  		assert(s_tradeToken.balanceOf(address(this)) == 0 && tradeToken.balanceOf(address(this)) ==0);
+  		assert(isClose(startbalance,baseToken.balanceOf(address(this)), ROUND ));
+  		// is equal to liquidity * pricedelta * sum (do math checks )
   		// get a whole bunch of managers and some taker buy some taker short some set limits 
 
   		//everyone can claim + unwind 
+
+  		//everyone's profit is well calculated 
 
 
   	}

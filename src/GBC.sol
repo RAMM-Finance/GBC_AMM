@@ -151,10 +151,7 @@ contract GranularBondingCurve{
         uint128 protocolFee;
         // the current liquidity in range
         uint128 liquidity;
-
-        uint256 a; 
-        uint256 b; 
-        uint256 s;
+        uint128 liquidityStart; 
 
 
     }
@@ -178,6 +175,11 @@ contract GranularBondingCurve{
         uint128 liqDir; 
     }
 
+    struct swapVars{
+    	uint256 a;
+    	uint256 s; 
+    	uint256 b; 
+    }
 
     /// param +amountSpecified is in base if moveUp, else is in trade
     /// -amountSpecified is in trade if moveUp, else is in base 
@@ -194,7 +196,6 @@ contract GranularBondingCurve{
 
         Slot0 memory slot0Start = slot0; 
         uint256 pDelta = priceDelta; 
-        uint128 liquidityStart = liquidity; 
 
         SwapState memory state = SwapState({
             amountSpecifiedRemaining: amountSpecified, 
@@ -202,17 +203,27 @@ contract GranularBondingCurve{
             curPrice: uint256(slot0Start.curPrice),
             feeGrowthGlobal: moveUp? feeGrowthGlobalBase: feeGrowthGlobalTrade,//moveup is base in for trade out
             protocolFee: 0, 
-            liquidity: liquidityStart, 
-            point: slot0.point, 
-            a: 0, 
-            b: 0, 
-            s: 0
+            liquidity: liquidity, 
+            liquidityStart: liquidity,
+            point: slot0.point
             }); 
+        swapVars memory vars = swapVars({
+        	a:0,
+        	b:0,
+        	s:0
+        	});
 
         bool exactInput = amountSpecified > 0;
 
-        // increment price by 1/1e18 if at boundary, should be negligible compared to fees 
-        if (mod0(state.curPrice, pDelta) && !moveUp) state.curPrice += 1; 
+        // increment price by 1/1e18 if at boundary, and go back up a point,
+        // should be negligible compared to fees TODO 
+        if (mod0(state.curPrice, pDelta) && !moveUp) {
+        	state.curPrice += 1; 
+        	state.point = priceToPoint(state.curPrice);
+        	slot0.point = state.point; 
+        	slot0Start.point = state.point; 
+        }
+
         while (state.amountSpecifiedRemaining !=0 && state.curPrice != priceLimit){
             StepComputations memory step; 
 
@@ -223,18 +234,17 @@ contract GranularBondingCurve{
             // Need liquidity for both move up and move down for path independence within a 
             // given point range. Either one of them should be 0 
             step.liqDir = ticks.oneTimeLiquidity(state.point);
-            state.a = exactInput 
+            vars.a = exactInput 
                 ? inv(state.liquidity + step.liqDir)
                 : invRoundUp(state.liquidity + step.liqDir); 
-            state.b = yInt(state.curPrice, moveUp); 
-            state.s = xMax(state.curPrice, state.b, state.a); 
+            vars.b = yInt(state.curPrice, moveUp); 
+            vars.s = xMax(state.curPrice, vars.b, vars.a); 
             {console.log('________'); 
             console.log('CURPRICE', state.curPrice); 
             console.log('trading; liquidity, amountleft', state.liquidity); 
             console.log(uint256(-state.amountSpecifiedRemaining));
-            console.log('nextpricelimit/pointnext', step.priceNextLimit, step.pointNext); 
-            console.log('liquidities', uint256(step.liqDir));  
-            console.log('a', state.a); }
+            console.log('nextpricelimit/pointnext', step.priceNextLimit, step.pointNext);           
+            console.log('a', vars.a); }
 
             //If moveup, amountIn is in cash, amountOut is token and vice versa 
             (state.curPrice, step.amountIn, step.amountOut, step.feeAmount) = swapStep(
@@ -242,12 +252,10 @@ contract GranularBondingCurve{
                 step.priceNextLimit,    
                 state.amountSpecifiedRemaining, 
                 fee, 
-                state.a, 
-                state.s, 
-                state.b
+                vars               
                 ); 
             console.log('amountinandout', step.amountIn, step.amountOut); 
-            console.log('s,b', state.s, state.b); 
+            console.log('s,b', vars.s, vars.b); 
 
             if (exactInput){
                 state.amountSpecifiedRemaining -= int256(step.amountIn); 
@@ -276,16 +284,14 @@ contract GranularBondingCurve{
 
                 state.liquidity = addDelta(state.liquidity,liquidityNet);
 
-                console.log('liquiditynet, newprice', uint256(int256(liquidityNet)), state.curPrice); 
                 state.point = step.pointNext;  
             }
         }
 
-        if(state.point != slot0Start.point){
-            (slot0.curPrice, slot0.point) = (state.curPrice.toUint160(), state.point); 
-        }
-
-        if (liquidityStart != state.liquidity) liquidity = state.liquidity;
+        slot0.curPrice = state.curPrice.toUint160(); 
+        if(state.point != slot0Start.point) slot0.point = state.point; 
+            
+        if (state.liquidityStart != state.liquidity) liquidity = state.liquidity;
 
         if (moveUp) feeGrowthGlobalBase = state.feeGrowthGlobal; 
             
@@ -624,17 +630,13 @@ contract GranularBondingCurve{
 
     /// @notice Compute results of swap given amount in and params
     /// @param feePips The fee taken from the input amount, expressed in hundredths of a bip
-    /// @param a is the inverseLiquidity, the slope of the curve at current price range 
     /// b is 0 and s is curPrice/a during variable liquidity phase
     function swapStep(
         uint256 curPrice, 
         uint256 targetPrice, 
         int256 amountRemaining, 
-        uint24 feePips,
-
-        uint256 a, 
-        uint256 s,
-        uint256 b
+        uint24 feePips,    
+        swapVars memory vars       
         ) 
         internal 
         pure 
@@ -648,15 +650,15 @@ contract GranularBondingCurve{
             // uint256 amountRemainingLessFee = uint256(amountRemaining).mulDivDown(1e6-feePips, 1e6);
 
             if (moveUp){
-                (amountOut, nextPrice) = amountOutGivenIn(uint256(amountRemaining),s,a,b, true); 
+                (amountOut, nextPrice) = amountOutGivenIn(uint256(amountRemaining),vars.s,vars.a,vars.b, true); 
 
                 // If overshoot go to next point
                 if (nextPrice >= targetPrice){
                     nextPrice = targetPrice; 
 
                     // max amount out for a given price range is Pdelta / a 
-                    amountOut = (targetPrice - curPrice).divWadDown(a); 
-                    amountIn = areaUnderCurve(amountOut, s,a,b).mulDivDown(1e6+feePips, 1e6); 
+                    amountOut = (targetPrice - curPrice).divWadDown(vars.a); 
+                    amountIn = areaUnderCurve(amountOut, vars.s,vars.a,vars.b).mulDivDown(1e6+feePips, 1e6); 
                 }            
                 else {
                     amountIn = uint256(amountRemaining).mulDivDown(1e6+feePips, 1e6); 
@@ -666,16 +668,16 @@ contract GranularBondingCurve{
             // amountIn is trade, amountOut is base 
             else {
                 // If amount is greater than s, then need to cap it 
-                (amountOut, nextPrice) = amountOutGivenIn(min(uint256(amountRemaining),s), s,a,b,false); 
-
+                (amountOut, nextPrice) = amountOutGivenIn(min(uint256(amountRemaining),vars.s), vars.s,vars.a,vars.b,false); 
                 // If undershoot go to previous point 
                 if(nextPrice <= targetPrice){
                     nextPrice = targetPrice; 
 
                     // max amount out is area under curve 
-                    amountIn = (curPrice - targetPrice).divWadDown(a);
-                    amountOut = areaUnderCurve(amountIn, 0,a,b); 
+                    amountIn = (curPrice - targetPrice).divWadDown(vars.a);
+                    amountOut = areaUnderCurve(amountIn, 0,vars.a,vars.b); 
                     amountIn = amountIn.mulDivDown(1e6+feePips, 1e6); 
+
                 }
                 else{
                     amountIn = uint256(amountRemaining).mulDivDown(1e6+feePips, 1e6); 
@@ -687,11 +689,11 @@ contract GranularBondingCurve{
         else {
             if(moveUp){
                 uint256 remaining = uint256(-amountRemaining); 
-            	nextPrice = a.mulWadUp(remaining) + b; 
+            	nextPrice = vars.a.mulWadUp(remaining) + curPrice; 
 
                 // if overshoot
             	if(nextPrice>=targetPrice){
-            		amountIn = xMax(targetPrice,  b,  a); 
+            		amountIn = xMax(targetPrice, curPrice,  vars.a); 
             		nextPrice = targetPrice; 
 
                     // Prevent stuck cases where point is almost filled but not quite 
@@ -701,7 +703,8 @@ contract GranularBondingCurve{
             	}
             	else amountIn = remaining; 
 
-            	amountOut = areaUnderCurveRoundUp(amountIn, 0, a, b); //you want this to be more, so round up
+            	amountOut = areaUnderCurveRoundUp(amountIn, 0, vars.a, curPrice); //you want this to be more, so round up
+
             }
             else{
                 //TODO 
@@ -1301,7 +1304,7 @@ contract BoundedDerivativesPool {
                 priceLimit, 
                 data
             ); 
-
+            console.log('shorting,', poolamountIn, poolamountOut,poolamountIn.mulWadDown(maxPrice) - poolamountOut );
             // Escrow collateral required for shorting, where price for long + short = maxPrice, 
             // so (maxPrice-price of trade) * quantity
             BaseToken.transferFrom(msg.sender, address(this), poolamountIn.mulWadDown(maxPrice) - poolamountOut); 
@@ -1344,12 +1347,13 @@ contract BoundedDerivativesPool {
                 priceLimit, 
                 data
             ); 
-            console.log('poolamountinandout', poolamountIn, poolamountOut); 
+            console.log('to burn and balance', poolamountIn,poolamountOut,  s_tradeToken.balanceOf(msg.sender)); 
+            console.log(poolamountOut.mulWadDown(maxPrice) - poolamountIn, BaseToken.balanceOf(address(this))); 
+
             // burn trader's shortTokens and transfer remaining base, which is (maxprice-price of trade) * quantity
             s_tradeToken.burn(msg.sender, poolamountOut); 
             BaseToken.transfer(msg.sender, poolamountOut.mulWadDown(maxPrice) - poolamountIn);
         }
-
     }
 
     /// @notice provides oneTimeliquidity in the range (point,point+1)
