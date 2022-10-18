@@ -22,18 +22,18 @@ contract PoolTest is Test {
         18); 
         s_tradeToken = new ERC20("strade", "strade", 18); 
 
-        pool = new BoundedDerivativesPool(address(baseToken), address(tradeToken), address(s_tradeToken)); 
+        pool = new BoundedDerivativesPool(address(baseToken), address(tradeToken), address(s_tradeToken), true); 
 
     }
 
     function testMaker() external {
-        bytes memory data; 
+        // bytes memory data; 
 
-        //maker shorts and taker longs 
-        (uint256 escrowAmount, uint128 crossId) = pool.makerOpen(61, uint128(500*PRECISION), false); 
-        console.log('escrowAmount', escrowAmount); 
-        (uint256 amountIn, uint256 amountOut) = pool.takerOpen(true, int256(escrowAmount), PRECISION, data );
-        console.log('amountin/out', amountIn, amountOut); 
+        // //maker shorts and taker longs 
+        // (uint256 escrowAmount, uint128 crossId) = pool.makerOpen(61, uint128(500*PRECISION), false); 
+        // console.log('escrowAmount', escrowAmount); 
+        // (uint256 amountIn, uint256 amountOut) = pool.takerOpen(true, int256(escrowAmount), PRECISION, data );
+        // console.log('amountin/out', amountIn, amountOut); 
 
         //maker longs and taker shorts 
 
